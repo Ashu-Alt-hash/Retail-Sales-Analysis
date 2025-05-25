@@ -1,4 +1,4 @@
-Project Overview
+Project Overview (Intern Project For Internship Studio
 
 This project aims to analyze retail customer transaction behavior, detect patterns, identify key customers, and predict churn using both SQL and Python. The end-to-end pipeline includes data ingestion, cleaning, transformation, exploratory data analysis, time-series analysis, customer segmentation (cohort analysis), and logistic regression-based churn prediction.
 
