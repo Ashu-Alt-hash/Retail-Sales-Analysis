@@ -1,0 +1,187 @@
+import pandas as pd
+import numpy as np
+from scipy import stats
+import seaborn as sns
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, classification_report
+
+# Load the CSVs
+trxn = pd.read_csv(r'D:\Ashu Projects\SQL\Retail_Data_Transactions.csv')
+response = pd.read_csv(r'D:\Ashu Projects\SQL\Retail_Data_Response.csv')
+
+# Print columns to debug
+print("trxn columns:", trxn.columns.tolist())
+print("response columns:", response.columns.tolist())
+
+# Rename if needed
+trxn.rename(columns={'customer_id': 'Customer_id'}, inplace=True)
+response.rename(columns={'customer_id': 'Customer_id'}, inplace=True)
+
+# Merge
+df = trxn.merge(response, on='Customer_id', how='left')
+print(df.head())
+
+# ------------------ CLEANING ------------------
+print(df.dtypes)
+print(df.shape)
+print(df.head())
+print(df.tail())
+print(df.describe())
+
+# Drop missing values
+df = df.dropna()
+
+print("df columns:", df.columns.tolist())
+# Rename transaction columns to standard names
+trxn.rename(columns={
+    'customer_id': 'Customer_id',
+    'trans_date': 'Transaction_date',
+    'tran_amount': 'Transaction_amount' 
+}, inplace=True)
+
+# Rename response column if needed
+response.rename(columns={'customer_id': 'Customer_id'}, inplace=True)
+df = trxn.merge(response, on='Customer_id', how='left')
+# Confirm renamed columns
+print("Final df columns:", df.columns.tolist())
+
+# Now safe to use
+df['Transaction_date'] = pd.to_datetime(df['Transaction_date'], format='%d-%b-%y')
+z_score_amount = np.abs(stats.zscore(df['Transaction_amount']))
+
+# ------------------ OUTLIER DETECTION ------------------
+z_score_amount = np.abs(stats.zscore(df['Transaction_amount']))
+print("Transaction_amount outliers:\n", df[z_score_amount > 3])
+
+# Boxplot
+sns.boxplot(x=df['Transaction_amount'])
+plt.title("Boxplot: Transaction Amount")
+plt.show()
+
+sns.boxplot(x=df['response'])
+plt.title("Boxplot: Response")
+plt.savefig("transaction_amount_boxplot.png")
+plt.show()
+
+# ------------------ FEATURE ENGINEERING ------------------
+df['month'] = df['Transaction_date'].dt.month
+
+# ------------------ MONTHLY SALES ------------------
+monthly_sales = df.groupby('month')['Transaction_amount'].sum().reset_index()
+top_months = monthly_sales.sort_values(by='Transaction_amount', ascending=False).head(5)
+print("Top 5 months by sales:\n", top_months)
+
+# ------------------ TOP CUSTOMERS ------------------
+customer_counts = df['Customer_id'].value_counts().reset_index()
+customer_counts.columns = ['Customer_id', 'count']
+top_5_customers = customer_counts.sort_values(by='count', ascending=False).head(5)
+sns.barplot(x='Customer_id', y='count', data=top_5_customers)
+plt.title('Top 5 Customers with Highest Number of Orders')
+plt.show()
+
+customer_sales = df.groupby('Customer_id')['Transaction_amount'].sum().reset_index()
+top_5_sales = customer_sales.sort_values(by='Transaction_amount', ascending=False).head(5)
+sns.barplot(x='Customer_id', y='Transaction_amount', data=top_5_sales)
+plt.title('Top 5 Customers by Order Value')
+plt.show()
+
+# ------------------ TIME SERIES ANALYSIS ------------------
+df['month_year'] = df['Transaction_date'].dt.to_period('M')
+monthly_trend = df.groupby('month_year')['Transaction_amount'].sum()
+monthly_trend.index = monthly_trend.index.to_timestamp()
+
+plt.figure(figsize=(12, 6))
+plt.plot(monthly_trend.index, monthly_trend.values)
+plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+plt.gca().xaxis.set_major_locator(mdates.MonthLocator(interval=6))
+plt.title('Monthly Sales Trend')
+plt.xlabel('Month-Year')
+plt.ylabel('Sales')
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
+
+# ------------------ COHORT SEGMENTATION ------------------
+recency = df.groupby('Customer_id')['Transaction_date'].max().reset_index()
+recency['Recency'] = (pd.to_datetime('2023-10-01') - recency['Transaction_date']).dt.days
+frequency = df.groupby('Customer_id')['Transaction_date'].count().reset_index()
+frequency.columns = ['Customer_id', 'Frequency']
+monetary = df.groupby('Customer_id')['Transaction_amount'].sum().reset_index()
+monetary.columns = ['Customer_id', 'Monetary']
+
+cohort = recency[['Customer_id', 'Recency']].merge(frequency, on='Customer_id')
+cohort = cohort.merge(monetary, on='Customer_id')
+
+# Binning
+cohort['Recency_bin'] = pd.cut(cohort['Recency'], bins=[0, 30, 60, 90, 120, 150, 10000], labels=['0-30', '31-60', '61-90', '91-120', '121-150', '150+'])
+cohort['Frequency_bin'] = pd.cut(cohort['Frequency'], bins=[0, 1, 2, 3, 4, 100], labels=['1', '2', '3', '4', '5+'])
+cohort['Monetary_bin'] = pd.cut(cohort['Monetary'], bins=[0, 100, 200, 300, 400, 500, 100000], labels=['0-100', '101-200', '201-300', '301-400', '401-500', '501+'])
+
+print(cohort.head())
+
+# ------------------ CHURN ANALYSIS ------------------
+churn_counts = df['response'].value_counts().reset_index()
+churn_counts.columns = ['response', 'count']
+sns.barplot(x='response', y='count', data=churn_counts)
+plt.title('Churn Analysis')
+plt.xlabel('Churn')
+plt.ylabel('Count')
+plt.show()
+
+# ------------------ TOP CUSTOMERS MONTHLY SALES ------------------
+top_5_ids = top_5_sales['Customer_id']
+top_customers_df = df[df['Customer_id'].isin(top_5_ids)]
+monthly_customer_sales = top_customers_df.groupby(['month_year', 'Customer_id'])['Transaction_amount'].sum().unstack()
+monthly_customer_sales.plot(kind='bar', stacked=True, figsize=(12, 6))
+plt.title('Monthly Sales of Top 5 Customers')
+plt.xlabel('Month-Year')
+plt.ylabel('Sales')
+plt.legend(title='Customer ID')
+plt.show()
+
+# ------------------ PREDICTIVE MODELING ------------------
+# Prepare aggregated features
+agg_df = df.groupby('Customer_id').agg({
+    'Transaction_amount': 'sum',
+    'response': 'max'
+}).reset_index()
+
+# Modeling
+# Drop rows where 'response' is NaN
+agg_df = agg_df.dropna(subset=['response'])
+
+# Define features and target
+X = agg_df[['Transaction_amount']]
+y = agg_df['response']
+
+# Train-test split
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Train model
+model = LogisticRegression()
+model.fit(X_train, y_train)
+
+# Predict
+y_pred = model.predict(X_test)
+
+# Evaluation
+from sklearn.metrics import accuracy_score, classification_report
+
+accuracy = accuracy_score(y_test, y_pred)
+report = classification_report(y_test, y_pred, zero_division=0)  
+
+print(f"Accuracy: {accuracy:.4f}")
+print(report)
+
+#TRANSFORM DATA TO CSV
+df.to_csv(r'D:\Ashu Projects\SQL\Retail_Data_Analysis.csv', index=False)
+print("Data saved to Retail_Data_Analysis.csv")
+
+cohort.to_csv(r'D:\Ashu Projects\SQL\Cohort_Segmentation.csv', index=False)
+print("Cohort data saved to Cohort_Segmentation.csv")
+
+
+#------------------- END OF SCRIPT ------------------
